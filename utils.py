@@ -2,7 +2,6 @@
 Convenience utils for use in avs and parsers
 """
 
-import contextlib
 from datetime import datetime, timezone
 from enum import Enum
 
