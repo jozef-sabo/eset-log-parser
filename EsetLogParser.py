@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''
+"""
 EsetLogParser: Python script for parsing ESET (NOD32) virlog.dat file.
 Copyright (C) 2017 Ladislav Baco
 
@@ -17,157 +17,155 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
-'''
+"""
 
 from __future__ import print_function
+
+__author__ = "Ladislav Baco"
+__copyright__ = "Copyright (C) 2017"
+__credits__ = "Ladislav Baco"
+__license__ = "GPLv3"
+__version__ = "0.2.1"
+__maintainer__ = "Ladislav Baco"
+__status__ = "Development"
+
 from datetime import datetime
 import argparse
-import binascii
-import struct
-import os, time
+import os
 import sys
 
-__author__ = 'Ladislav Baco'
-__copyright__ = 'Copyright (C) 2017'
-__credits__ = 'Ladislav Baco'
-__license__ = 'GPLv3'
-__version__ = '0.2.1'
-__maintainer__ = 'Ladislav Baco'
-__status__ = 'Development'
+from eset_virlog_parser import EsetVirlogParser
 
-TIMEFORMAT = '%Y-%m-%dT%H:%M:%SZ'
-NULL = b'\x00\x00'
-RECORD_HEADER = b'\x24\x00\x00\x00\x01\x00\x01\x00'
-OBJECT_HEADER = b'\xbe\x0b\x4e\x00'
-INFILTRATION_HEADER = b'\x4d\x1d\x4e\x00'
-USER_HEADER = b'\xee\x03\x4e\x00'
-VIRUSDB_HEADER = b'\x17\x27\x4e\x00'
-PROGNAME_HEADER = b'\xc4\x0b\x4e\x00'
-PROGHASH_HEADER = b'\x9d\x13\x42\x00'
-OBJECTHASH_HEADER = b'\x9e\x13\x42\x00'
-FIRSTSEEN_HEADER = b'\x9f\x13\x46\x00'
+TIMEFORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
-_dataTypeHeaders = {'Object': OBJECT_HEADER,
-                   'Infiltration': INFILTRATION_HEADER,
-                   'User': USER_HEADER,
-                   'VirusDB': VIRUSDB_HEADER,
-                   'ProgName': PROGNAME_HEADER}
-_hashTypeHeaders = {'ObjectHash': OBJECTHASH_HEADER,
-               'ProgHash': PROGHASH_HEADER}
 
 def eprint(*args, **kwargs):
-	'''Prints debug messages to stderr'''
-	print(*args, file=sys.stderr, **kwargs)
+    """Prints debug messages to stderr"""
+    print(*args, file=sys.stderr, **kwargs)
+
 
 def _infoNotFound(field):
-	eprint('Info: field not found: ' + field)
+    eprint("Info: field not found: " + field)
+
 
 def _warningUnexpected(field):
-	eprint('Warning: unexpected bytes in field ' + field)
+    eprint("Warning: unexpected bytes in field " + field)
 
-def _winToUnixTimestamp(winTimestamp):
-	magicNumber = 11644473600
-	return (winTimestamp / 10000000) - magicNumber
 
-def _extractDataType(dataType,rawRecord):
-	#Format: dataType_HEADER + '??' + NULL + objectData + NULL
+def convertToDict(parser: EsetVirlogParser):
+    return [
+        {
+            **{
+                y.name.name: y.arg if hasattr(y, "arg") else None
+                for y in x.record.data_fields
+            },
+            "timestamp": x.record.win_timestamp,
+        }
+        for x in parser.threats
+    ]
 
-	dataType_HEADER = _dataTypeHeaders[dataType]
-	dataOffset = rawRecord.find(dataType_HEADER);
-	if dataOffset < 0:
-		_infoNotFound(dataType)
-		return ''
-	if rawRecord[dataOffset+6:dataOffset+8] != NULL:
-		_warningUnexpected(dataType)
-	# find NULL char, but search for (\x00)*3, because third zero byte is part of last widechar
-	dataEnd = dataOffset + 8 + 1 + rawRecord[dataOffset+8:].find(b'\x00' + NULL)
-	dataWideChar = rawRecord[dataOffset+8:dataEnd]
-	return dataWideChar.decode('utf-16')
 
-def _extractHashType(hashType,rawRecord):
-	#Format: hashType_HEADER + '??' + NULL + hashData[20]
+def getRawRecords(virlogParser):
+    rawRecords = convertToDict(virlogParser)
 
-	hashType_HEADER = _hashTypeHeaders[hashType]
-	hashOffset = rawRecord.find(hashType_HEADER);
-	if hashOffset < 0:
-		_infoNotFound(hashType)
-		return ''
-	if rawRecord[hashOffset+6:hashOffset+8] != NULL:
-		_warningUnexpected(hashType)
-	hashEnd = hashOffset + 8 + 20
-	hashHex = rawRecord[hashOffset+8:hashEnd]
-	#return hashHex.encode('hex')
-	return binascii.hexlify(hashHex).decode('utf-8')
+    ziprecords = zip(range(len(rawRecords)), rawRecords)
+    records = []
+    for recordId, rawRecord in ziprecords:
+        # create 2D array instead of zip-object in Python 3
+        records.append((recordId, rawRecord))
+    return records
 
-def _extractFirstSeen(rawRecord):
-	#Format: FIRSTSEEN_HEADER + UnixTimestamp[4]
 
-	offset = rawRecord.find(FIRSTSEEN_HEADER);
-	if offset < 0:
-		_infoNotFound('FirstSeen')
-		return ''
-	littleEndianTimestamp = rawRecord[offset+4:offset+8]
-	timestamp = struct.unpack('<L', littleEndianTimestamp)[0]
-	return datetime.utcfromtimestamp(timestamp).strftime(TIMEFORMAT)
+def processType(field):
+    if isinstance(field, EsetVirlogParser.Hash):
+        return field.hash.hex()
+    if isinstance(field, EsetVirlogParser.Widestr):
+        return field.str
+    if isinstance(field, EsetVirlogParser.Unixdate):
+        return processType(field.date_time)
+    if isinstance(field, EsetVirlogParser.Windate):
+        return processType(field.date_time)
+    if isinstance(field, datetime):
+        return field.strftime(TIMEFORMAT)
 
-def _extractTimestamp(rawRecord):
-	#Format: RECORD_HEADER + ID[4] + MicrosoftTimestamp[8]
+    return field
 
-	littleEndianTimestamp = rawRecord[4:12]
-	winTimestamp = struct.unpack('<Q', littleEndianTimestamp)[0]
-	timestamp = _winToUnixTimestamp(winTimestamp)
-	return datetime.utcfromtimestamp(timestamp).strftime(TIMEFORMAT)
 
-def _checkID(recordId, rawRecord):
-	littleEndianIds = [rawRecord[0:4], rawRecord[16:20]]
-	for littleEndianId in littleEndianIds:
-		if struct.unpack('<L', littleEndianId)[0] != recordId:
-			_warningUnexpected('ID')
+def extract_field(record, fieldName):
+    field = record.get(fieldName)
 
-def getRawRecords(rawData):
-	rawRecords = rawData.split(RECORD_HEADER)[1:]
-	ziprecords = zip(range(len(rawRecords)), rawRecords)
-	records = []
-	for recordId, rawRecord in ziprecords:
-		_checkID(recordId, rawRecord)
-		# create 2D array instead of zip-object in Python 3
-		records.append((recordId, rawRecord)) 
-	return records
+    if field is not None:
+        return processType(field)
 
-def parseRecord(recordId, rawRecord):
-	timestamp = _extractTimestamp(rawRecord)
-	virusdb = _extractDataType('VirusDB', rawRecord)
-	obj = _extractDataType('Object', rawRecord)
-	objhash = _extractHashType('ObjectHash', rawRecord)
-	infiltration = _extractDataType('Infiltration', rawRecord)
-	user = _extractDataType('User', rawRecord)
-	progname = _extractDataType('ProgName', rawRecord)
-	proghash = _extractHashType('ProgHash', rawRecord)
-	firstseen = _extractFirstSeen(rawRecord)
+    _infoNotFound(fieldName)
+    return "(null)"
 
-	return [str(recordId), timestamp, virusdb, obj, objhash, infiltration, user, progname, proghash, firstseen]
+
+def parseRecord(recordId, record: dict):
+    timestamp = extract_field(record, "timestamp")
+    virusdb = extract_field(record, "virus_db")
+    obj = extract_field(record, "object_name")
+    objhash = extract_field(record, "object_hash")
+    infiltration = extract_field(record, "infiltration_name")
+    user = extract_field(record, "user_name")
+    if user is not None:
+        user = user.split("\\")[1]
+    progname = extract_field(record, "program_name")
+    proghash = extract_field(record, "program_hash")
+    firstseen = extract_field(record, "firstseen")
+
+    return [
+        str(recordId),
+        timestamp,
+        virusdb,
+        obj,
+        objhash,
+        infiltration,
+        user,
+        progname,
+        proghash,
+        firstseen,
+    ]
+
 
 def _parse_args(args):
-	parser = argparse.ArgumentParser(description='EsetLogParser: Python script for parsing ESET (NOD32) virlog.dat file.')
-	parser.add_argument('virlog', help='path to virlog.dat file')
-	parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + __version__)
-	return parser.parse_args(args)
+    parser = argparse.ArgumentParser(
+        description="EsetLogParser: Python script for parsing ESET (NOD32) virlog.dat file."
+    )
+    parser.add_argument("virlog", help="path to virlog.dat file")
+    parser.add_argument(
+        "-v", "--version", action="version", version="%(prog)s " + __version__
+    )
+    return parser.parse_args(args)
 
 
 def main(argv):
-	args = _parse_args(argv)
+    args = _parse_args(argv)
 
-	if not os.path.isfile(args.virlog):
-	        raise Exception('Virlog file does not exist')
+    if not os.path.isfile(args.virlog):
+        raise Exception("Virlog file does not exist")
 
-	with open(args.virlog, 'rb') as f:
-		virlog_data = f.read()
+    ep = EsetVirlogParser.from_file(args.virlog)
 
-	rawRecords = getRawRecords(virlog_data)
-	parsedRecords = [['ID', 'Timestamp', 'VirusDB', 'Object', 'ObjectHash','Infiltration', 'User', 'ProgName', 'ProgHash', 'FirstSeen']]
-	for recordId, rawRecord in rawRecords:
-		parsedRecords.append(parseRecord(recordId, rawRecord))
-	print('\n'.join([';'.join(record) for record in parsedRecords]))
+    rawRecords = getRawRecords(ep)
+    parsedRecords = [
+        [
+            "ID",
+            "Timestamp",
+            "VirusDB",
+            "Object",
+            "ObjectHash",
+            "Infiltration",
+            "User",
+            "ProgName",
+            "ProgHash",
+            "FirstSeen",
+        ]
+    ]
+    for recordId, rawRecord in rawRecords:
+        parsedRecords.append(parseRecord(recordId, rawRecord))
+    print("\n".join([";".join(record) for record in parsedRecords]))
 
-if __name__ == '__main__':
-	main(sys.argv[1:])
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
