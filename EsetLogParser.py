@@ -101,7 +101,7 @@ def getRawNDFRecords(ndfParser):
 
 def processType(field):
     if isinstance(field, EsetVirlogParser.Hash):
-        return field.hash.hex()
+        return processType(field.hash)
     if isinstance(field, EsetVirlogParser.Widestr):
         return field.str
     if isinstance(field, EsetVirlogParser.Unixdate):
