@@ -110,7 +110,7 @@ class EsetLogParserTest(unittest.TestCase):
         import EsetLogParser
 
         with capture() as (out, err):
-            parsed = EsetLogParser.main(["testlog.dat"])
+            EsetLogParser.main(["testlog.dat"])
         msg = out.getvalue()
         self.assertEqual(msg.count("\n"), 3)
         self.assertTrue(msg.find("@Teststring.Eicar") > -1)
@@ -146,7 +146,7 @@ class EsetNDFParserTest(unittest.TestCase):
         import EsetLogParser
 
         with capture() as (out, err):
-            parsed = EsetLogParser.main(["testndf.ndf", "--type", "ndf"])
+            EsetLogParser.main(["testndf.ndf", "--type", "ndf"])
         msg = out.getvalue()
         self.assertEqual(msg.count("\n"), 5)
         self.assertTrue(msg.find("@NAME=Eicar@TYPE=Teststring@SUSP=inf") > -1)
