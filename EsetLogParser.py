@@ -21,9 +21,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import print_function
 
-__author__ = "Ladislav Baco"
-__copyright__ = "Copyright (C) 2017"
-__credits__ = "Ladislav Baco"
+__author__ = "Ladislav Baco, Jozef Sabo"
+__copyright__ = "Copyright (C) 2017-2025"
+__credits__ = "Ladislav Baco, Jozef Sabo"
 __license__ = "GPLv3"
 __version__ = "0.2.1"
 __maintainer__ = "Ladislav Baco"
