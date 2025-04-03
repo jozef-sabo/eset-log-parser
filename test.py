@@ -1,6 +1,7 @@
 import unittest
 import sys
 
+from eset_ndf_parser import EsetNdfParser
 from eset_virlog_parser import EsetVirlogParser
 
 if sys.hexversion >= 0x03000000:
@@ -29,6 +30,11 @@ class HelperMethodsTest(unittest.TestCase):
         tc = RawTimeConverter("windows")
 
         self.assertEqual(tc.decode(time_bytes).timestamp(), 1490474799)
+
+    def test_timestamp_conversion_fail(self):
+        from utils import RawTimeConverter
+
+        self.assertRaises(ValueError, RawTimeConverter, ("debian",))
 
     def test_error_print(self):
         from EsetLogParser import eprint
@@ -65,7 +71,18 @@ class ArgumentTest(unittest.TestCase):
 
         virlog = "virlog.dat"
         args = _parse_args([virlog])
-        self.assertEqual(args.virlog, virlog)
+        self.assertEqual(args.path, virlog)
+
+    def test_main_argument_nonexistent(self):
+        import EsetLogParser
+
+        with capture() as (out, err):
+            self.assertRaises(
+                Exception,
+                EsetLogParser.main,
+                (["test.dat"],),
+                msg="virlog file does not exist",
+            )
 
 
 class EsetLogParserTest(unittest.TestCase):
@@ -74,17 +91,17 @@ class EsetLogParserTest(unittest.TestCase):
         self.data = EsetVirlogParser.from_file(virlog)
 
     def test_get_raw_records(self):
-        from EsetLogParser import getRawRecords
+        from EsetLogParser import getRawVirlogRecords
 
-        records = getRawRecords(self.data)
+        records = getRawVirlogRecords(self.data)
         self.assertEqual(len(records), 2)
 
     def test_parse_record(self):
-        from EsetLogParser import getRawRecords, parseRecord
+        from EsetLogParser import getRawVirlogRecords, parseVirlogRecord
 
-        records = getRawRecords(self.data)
+        records = getRawVirlogRecords(self.data)
         with capture() as (out, err):
-            parsed = parseRecord(records[0][0], records[0][1])
+            parsed = parseVirlogRecord(records[0][0], records[0][1])
         self.assertEqual(int(parsed[0]), 0)
         self.assertTrue("@Teststring.Eicar" in parsed)
         self.assertTrue("3395856ce81f2b7382dee72602f798b642f14140" in parsed)
@@ -98,6 +115,43 @@ class EsetLogParserTest(unittest.TestCase):
         self.assertEqual(msg.count("\n"), 3)
         self.assertTrue(msg.find("@Teststring.Eicar") > -1)
         self.assertTrue(msg.find("3395856ce81f2b7382dee72602f798b642f14140") > -1)
+
+
+class EsetNDFParserTest(unittest.TestCase):
+    def setUp(self):
+        ndf = "testndf.ndf"
+        self.data = EsetNdfParser.from_file(ndf)
+
+    def test_get_raw_records(self):
+        from EsetLogParser import getRawNDFRecords
+
+        header, records = getRawNDFRecords(self.data)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(type(header), dict)
+        self.assertEqual(len(header), 4)
+
+    def test_parse_record(self):
+        from EsetLogParser import getRawNDFRecords, parseNdfRecord
+
+        header, records = getRawNDFRecords(self.data)
+        with capture() as (out, err):
+            parsed = parseNdfRecord(records[0][0], records[0][1])
+            parsed_header = list(header.values())
+        self.assertEqual(int(parsed[0]), 0)
+        self.assertIn("@NAME=Eicar@TYPE=Teststring@SUSP=inf", parsed)
+        self.assertIn("3395856ce81f2b7382dee72602f798b642f14140", parsed_header)
+        self.assertIn(68, parsed_header)
+
+    def test_main(self):
+        import EsetLogParser
+
+        with capture() as (out, err):
+            parsed = EsetLogParser.main(["testndf.ndf", "--type", "ndf"])
+        msg = out.getvalue()
+        self.assertEqual(msg.count("\n"), 5)
+        self.assertTrue(msg.find("@NAME=Eicar@TYPE=Teststring@SUSP=inf") > -1)
+        self.assertTrue(msg.find("3395856ce81f2b7382dee72602f798b642f14140") > -1)
+        self.assertTrue(msg.find("68") > -1)
 
 
 if __name__ == "__main__":
