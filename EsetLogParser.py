@@ -29,11 +29,13 @@ __version__ = "0.2.1"
 __maintainer__ = "Ladislav Baco"
 __status__ = "Development"
 
+import typing
 from datetime import datetime
 import argparse
 import os
 import sys
 
+from eset_ndf_parser import EsetNdfParser
 from eset_virlog_parser import EsetVirlogParser
 
 TIMEFORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -52,7 +54,7 @@ def _warningUnexpected(field):
     eprint("Warning: unexpected bytes in field " + field)
 
 
-def convertToDict(parser: EsetVirlogParser):
+def convertVirlogToDict(parser: EsetVirlogParser):
     return [
         {
             **{
@@ -65,15 +67,36 @@ def convertToDict(parser: EsetVirlogParser):
     ]
 
 
-def getRawRecords(virlogParser):
-    rawRecords = convertToDict(virlogParser)
+def convertNDFToDict(parser: EsetNdfParser):
+    return {
+        "mal_size": parser.mal_size,
+        "num_findings": parser.num_findings,
+        "mal_hash_sha1": parser.mal_hash_sha1.hex(),
+        "datetime": parser.datetime_unix,
+        "findings": [
+            {
+                key: getattr(x, key)
+                for key in dir(x)
+                if not key.startswith("_")
+                and not isinstance(getattr(x, key), typing.Callable)
+            }
+            for x in parser.findings
+        ],
+    }
 
-    ziprecords = zip(range(len(rawRecords)), rawRecords)
-    records = []
-    for recordId, rawRecord in ziprecords:
-        # create 2D array instead of zip-object in Python 3
-        records.append((recordId, rawRecord))
-    return records
+
+def getRawVirlogRecords(virlogParser):
+    rawRecords = convertVirlogToDict(virlogParser)
+    return list(enumerate(rawRecords))
+
+
+def getRawNDFRecords(ndfParser):
+    rawRecords = convertNDFToDict(ndfParser)
+
+    records = list(enumerate(rawRecords.pop("findings")))
+    header = rawRecords
+
+    return header, records
 
 
 def processType(field):
@@ -85,13 +108,23 @@ def processType(field):
         return processType(field.date_time)
     if isinstance(field, EsetVirlogParser.Windate):
         return processType(field.date_time)
+    if isinstance(field, EsetNdfParser.Widestr):
+        return field.str
+    if isinstance(field, EsetNdfParser.Unixdate):
+        return processType(field.date_time)
+    if isinstance(field, EsetNdfParser.Windate):
+        return processType(field.date_time)
     if isinstance(field, datetime):
         return field.strftime(TIMEFORMAT)
+    if isinstance(field, bytes):
+        return field.hex()
+    if isinstance(field, int):
+        return str(field)
 
     return field
 
 
-def extract_field(record, fieldName):
+def extractField(record, fieldName):
     field = record.get(fieldName)
 
     if field is not None:
@@ -101,18 +134,18 @@ def extract_field(record, fieldName):
     return "(null)"
 
 
-def parseRecord(recordId, record: dict):
-    timestamp = extract_field(record, "timestamp")
-    virusdb = extract_field(record, "virus_db")
-    obj = extract_field(record, "object_name")
-    objhash = extract_field(record, "object_hash")
-    infiltration = extract_field(record, "infiltration_name")
-    user = extract_field(record, "user_name")
+def parseVirlogRecord(recordId, record: dict):
+    timestamp = extractField(record, "timestamp")
+    virusdb = extractField(record, "virus_db")
+    obj = extractField(record, "object_name")
+    objhash = extractField(record, "object_hash")
+    infiltration = extractField(record, "infiltration_name")
+    user = extractField(record, "user_name")
     if user is not None:
         user = user.split("\\")[1]
-    progname = extract_field(record, "program_name")
-    proghash = extract_field(record, "program_hash")
-    firstseen = extract_field(record, "firstseen")
+    progname = extractField(record, "program_name")
+    proghash = extractField(record, "program_hash")
+    firstseen = extractField(record, "firstseen")
 
     return [
         str(recordId),
@@ -128,26 +161,49 @@ def parseRecord(recordId, record: dict):
     ]
 
 
-def _parse_args(args):
-    parser = argparse.ArgumentParser(
-        description="EsetLogParser: Python script for parsing ESET (NOD32) virlog.dat file."
-    )
-    parser.add_argument("virlog", help="path to virlog.dat file")
-    parser.add_argument(
-        "-v", "--version", action="version", version="%(prog)s " + __version__
-    )
-    return parser.parse_args(args)
+def parseNdfRecord(recordId, record: dict):
+    firstseen = extractField(record, "datetime_first_utc")
+    mostRecentSeen = extractField(record, "datetime_latest_occurence")
+    quarEncodingStart = extractField(record, "datetime_quar_enc_start")
+    quarEncodingFin = extractField(record, "datetime_quar_enc_stop")
+    path1 = extractField(record, "mal_path")
+    path2 = extractField(record, "mal_path2")
+    threat = extractField(record, "threat_canonized")
+    threat_local = extractField(record, "threat_local")
+    occurrence = extractField(record, "threat_occurence")
+
+    return [
+        str(recordId),
+        firstseen,
+        mostRecentSeen,
+        quarEncodingStart,
+        quarEncodingFin,
+        path1,
+        path2,
+        threat,
+        threat_local,
+        occurrence,
+    ]
 
 
-def main(argv):
-    args = _parse_args(argv)
+def parseNdfHeader(record: dict):
+    maliciousSize = extractField(record, "mal_size")
+    numFindings = extractField(record, "num_findings")
+    SHA1 = extractField(record, "mal_hash_sha1")
+    firstseen = extractField(record, "datetime")
 
-    if not os.path.isfile(args.virlog):
-        raise Exception("Virlog file does not exist")
+    return [
+        firstseen,
+        SHA1,
+        maliciousSize,
+        numFindings,
+    ]
 
-    ep = EsetVirlogParser.from_file(args.virlog)
 
-    rawRecords = getRawRecords(ep)
+def processVirlog(path: str):
+    ep = EsetVirlogParser.from_file(path)
+
+    rawRecords = getRawVirlogRecords(ep)
     parsedRecords = [
         [
             "ID",
@@ -163,8 +219,74 @@ def main(argv):
         ]
     ]
     for recordId, rawRecord in rawRecords:
-        parsedRecords.append(parseRecord(recordId, rawRecord))
+        parsedRecords.append(parseVirlogRecord(recordId, rawRecord))
     print("\n".join([";".join(record) for record in parsedRecords]))
+
+
+def processNDF(path: str):
+    ep = EsetNdfParser.from_file(path)
+
+    header, rawRecords = getRawNDFRecords(ep)
+
+    parsedHeader = [
+        [
+            "FirstSeen",
+            "HexSHA1",
+            "MaliciousFileSize",
+            "NumberOfFindings",
+        ],
+        parseNdfHeader(header),
+    ]
+    print("\n".join([";".join(record) for record in parsedHeader]))
+
+    parsedRecords = [
+        [
+            "ID",
+            "FirstSeen",
+            "MostRecentSeen",
+            "QuarantineEncodingStart",
+            "QuarantineEncodingFinished",
+            "Path1",
+            "Path2",
+            "Infiltration",
+            "InfiltrationLocalized",
+            "NumberOfDetections",
+        ]
+    ]
+    for recordId, rawRecord in rawRecords:
+        parsedRecords.append(parseNdfRecord(recordId, rawRecord))
+    print("\n".join([";".join(record) for record in parsedRecords]))
+
+
+def processFile(filetype: str, path: str):
+    if filetype == "virlog":
+        return processVirlog(path)
+
+    if filetype == "ndf":
+        return processNDF(path)
+
+    assert False
+
+
+def _parse_args(args):
+    parser = argparse.ArgumentParser(
+        description="EsetLogParser: Python script for parsing ESET (NOD32) virlog.dat and quarantine metadata .ndf files."
+    )
+    parser.add_argument("path", help="path to virlog.dat or .ndf file")
+    parser.add_argument(
+        "-v", "--version", action="version", version="%(prog)s " + __version__
+    )
+    parser.add_argument("-t", "--type", choices=["virlog", "ndf"], default="virlog")
+    return parser.parse_args(args)
+
+
+def main(argv):
+    args = _parse_args(argv)
+
+    if not os.path.isfile(args.path):
+        raise Exception(f"{args.type} file does not exist")
+
+    processFile(args.type, args.path)
 
 
 if __name__ == "__main__":
