@@ -1,6 +1,6 @@
 # EsetLogParser
 
-[![Build Status](https://travis-ci.org/laciKE/EsetLogParser.svg?branch=master)](https://travis-ci.org/laciKE/EsetLogParser) [![Python 2.7|3.5](https://img.shields.io/badge/python-2.7|3.5-yellow.svg)](https://www.python.org/)
+[![Build Status](https://travis-ci.org/laciKE/EsetLogParser.svg?branch=master)](https://travis-ci.org/laciKE/EsetLogParser) [![Python 2.7|3.5|3.10](https://img.shields.io/badge/python-2.7|3.5|3.10-yellow.svg)](https://www.python.org/)
 
 Proof of Concept
 
@@ -44,6 +44,47 @@ The list of fields which I have not reversed in `virlog.dat` yet:
 
 ## Usage
 `python EsetLogParser.py path_to_virlog.dat`
+
+## Modern implementation (Python 3.10+)
+
+The `modern` directory contains a rewritten implementation for Python 3.10 and newer. It keeps the original command-line behavior while providing a reusable parser class and an expanded output format.
+
+### Usage
+
+Run the modern parser from the repository root:
+
+```console
+python modern/eset_virlog_parser.py path_to_virlog.dat
+```
+
+The output contains all fields configured in `EsetVirlogParser.INTERESTING_DATA_HEADERS`. The first columns preserve the legacy ordering for compatibility, while the remaining columns follow the configured field order. Missing values are represented by empty fields.
+
+The parser can also be used directly from Python:
+
+```python
+from modern.eset_virlog_parser import EsetVirlogParser
+```
+
+When importing it as part of an application, add `modern` to the module search path or use an appropriate package import. Parse binary `virlog.dat` data with `EsetVirlogParser().parse_records(data)`; the result is a list of rows, including the header row.
+
+### Advantages
+
+- **Reusable class-based API:** `EsetVirlogParser` encapsulates record extraction, conversion, output-field ordering, and complete log parsing.
+- **All configured fields:** output is no longer limited to the original selection of columns.
+- **Modern static typing:** annotations with built-in generic types improve IDE auto-completion and static-analysis results.
+- **Python 3.10 features:** structural pattern matching and strict ZIP processing make data handling clearer and safer.
+- **Explicit compatibility checks:** Python versions older than 3.10 are rejected with a clear error.
+- **Backward compatibility:** `modern/EsetLogParser.py` retains deprecated camelCase functions that delegate to the new implementation.
+- **Standard library only:** no external runtime dependencies are required.
+- **Tested behavior:** the modern test suite covers data types, complete parsing, CLI output, field ordering, and deprecated compatibility functions.
+
+Run the modern tests with:
+
+```console
+python modern/test.py
+```
+
+The original `EsetLogParser.py` and `test.py` remain the Python 2.7-compatible implementation and test suite. Use the modern version for new development and integrations.
 
 ## TODO
 - reversing all the fields in `virlog.dat` file
