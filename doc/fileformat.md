@@ -84,5 +84,68 @@ Each record of threat consists of multiple parts
 - Subsubrecords containing known or unknown parameters described in [Headers](#headers) section
 
 
+## .NDF quarantine metadata
+
+NDF file contains metadata about detections associated with one malicious file. Unlike `virlog.dat`, this file is parsed mostly based on the position of fields. Fields do not have their own headers. The next record starts after the last field of the previous record. All integers are unsigned and little-endian.
+
+### Data types
+
+- Unix timestamp (32-bit )
+- Windows timestamp (64-bit)
+- Wide string: 32-bit character count followed by `CharacterCount * 2` bytes in UTF-16LE. The value is not required to end with null bytes.
+- Hash: 32-bit byte count followed by the raw hash bytes.
+
+### Format
+
+The file consists of a header and finding records.
+Each file starts with magic `\x46\x51\x44\x46\xa4\x0f\x00\x00` (`FQDF` followed by four bytes), followed by the rest of the header and by `NumberOfFindings` finding records.
+
+#### Header
+
+Header of a file contains
+- Magic - 8 bytes, `\x46\x51\x44\x46\xa4\x0f\x00\x00`
+- Number of finding records (32-bit)
+- Unix timestamp (32-bit)
+- Filler - 4 bytes, normally `\x00\x00\x00\x00`
+- Size of the malicious file in bytes (64-bit)
+- SHA-1 hash length (32-bit)
+- SHA-1 hash of the malicious file - raw bytes of the declared length, normally 20 bytes
+
+The finding records start immediately after the hash.
+
+#### Finding record
+
+Each finding consists of multiple parts.
+- Malicious path (NDF wide string)
+- Date block size (32-bit)
+- Block type (32-bit) - selecting how to parse the following block
+- Block body - `DateBlockSize` in bytes
+- Filler 1 - 4 bytes, normally `\x00\x00\x00\x00`
+- Localized infiltration name (NDF wide string)
+- Canonical infiltration name (NDF wide string)
+- Filler 2 - 4 bytes, normally `\x00\x00\x00\x00`
+- Number of detections for this path (32-bit)
+- Unknown (32-bit)
+- Unix timestamp (32-bit)
+- Malicious path 2 (NDF wide string)
+
+Record IDs shown by the parser are not stored in the file. They are assigned sequentially from zero.
+
+#### Local threat block
+
+Local threat block magic is `\x4e\x49\x57\x49` (little-endian value `0x4957494e`).
+The currently known block has 32 bytes and contains fields based on these positions within the block:
+- Offset `0x00`: quarantine encoding start, Windows timestamp (8 bytes)
+- Offset `0x08`: first-seen timestamp, Windows timestamp (8 bytes)
+- Offset `0x10`: quarantine encoding stop, Windows timestamp (8 bytes)
+- Offset `0x18`: unknown size/value (4 bytes)
+- Offset `0x1c`: latest occurrence, Unix timestamp (4 bytes)
+
+`DateBlockSize` determines where Filler 1 starts. A different local block size cannot be parsed using this known positional layout.
+
+#### Web threat block
+
+Web threat block magic is `\x0c\x8a\xf8\x6a` (little-endian value `0x6af88a0c`). The currently known web threat block is empty and has no local timestamp fields. `DateBlockSize` still has to be honored to find the rest of the record.
+
 ## Other files
 TODO
